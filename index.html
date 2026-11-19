@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aura</title>
+<style>
+  :root { color-scheme: dark; --ink: #ddd7f6; --acc: #b9aaf0; --dim: rgba(221,215,246,.48); --line: rgba(185,170,240,.24); --bg: rgba(8,8,13,.8);
+          --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; font: 11px/1.3 var(--mono); color: var(--ink); text-transform: uppercase; letter-spacing: .06em; }
+  #stage { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; transition: opacity .35s; }
+  body.drag #stage { cursor: grabbing; }
+  body.output #ui, body.output #msg { display: none; }
+  body.output #stage { cursor: none; }
+  body.black #stage { opacity: 0; }
+
+  /* ---- control dock: one module per job ---- */
+  #ui { position: fixed; left: 12px; right: 12px; bottom: 12px; display: flex; flex-wrap: wrap; gap: 10px; padding: 10px;
+        background: var(--bg); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); border: 1px solid var(--line); border-radius: 4px; transition: opacity .4s; }
+  body.idle #ui, body.hide #ui { opacity: 0; pointer-events: none; }
+  body.idle { cursor: none; }
+  .mod { position: relative; border: 1px solid var(--line); padding: 18px 10px 8px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+  .mod > h2 { position: absolute; top: -1px; left: -1px; margin: 0; padding: 1px 6px; font: inherit; font-size: 9px; color: #0a0a10; background: var(--acc); letter-spacing: .12em; }
+  .row { display: flex; align-items: center; gap: 6px; }
+  .row > .l { width: 6.2em; color: var(--dim); font-size: 9px; letter-spacing: .1em; flex: none; }
+  .grow { flex: 1; min-width: 0; }
+  .dim { color: var(--dim); }
+  .sp { flex: 1; }
+
+  button, select, .btn, input[type=text] { font: inherit; color: var(--ink); text-transform: uppercase; letter-spacing: inherit; background: transparent;
+        border: 1px solid var(--line); border-radius: 0; padding: 4px 8px; cursor: pointer; }
+  button:disabled { opacity: .35; cursor: default; }
+  button:hover:not(:disabled), .btn:hover, select:hover { border-color: var(--acc); }
+  button:focus-visible, select:focus-visible, .knob:focus-visible, input:focus-visible { outline: 1px solid var(--acc); outline-offset: 1px; }
+  select { appearance: none; -webkit-appearance: none; width: 100%; text-overflow: ellipsis; padding-right: 4px; background: rgba(185,170,240,.05); }
+  select option { background: #11111a; color: var(--ink); text-transform: none; }
+  .step { padding: 4px 6px; line-height: 1; flex: none; }
+  input[type=text] { width: 100%; box-sizing: border-box; text-transform: none; cursor: text; background: rgba(185,170,240,.05); }
+  input[type=file] { display: none; }
+  .on { background: var(--acc); color: #0a0a10; border-color: var(--acc); }
+  .src::before { content: ""; display: inline-block; width: 5px; height: 5px; margin-right: 6px; border: 1px solid currentColor; border-radius: 50%; vertical-align: 1px; }
+  .src.on::before { background: #0a0a10; }
+  .keys { color: var(--dim); font-size: 9px; margin-left: 4px; }
+  .on .keys { color: #3a3358; }
+
+  /* knobs */
+  .knobs { display: flex; gap: 14px; }
+  .knob { width: 56px; text-align: center; cursor: ns-resize; user-select: none; touch-action: none; }
+  .knob .k { color: var(--dim); font-size: 9px; letter-spacing: .1em; }
+  .knob svg { display: block; margin: 2px auto; overflow: visible; }
+  .knob .v { font-size: 10px; }
+  .knob input { display: none; }
+  .tr { fill: none; stroke: var(--line); stroke-width: 1.5; }
+  .va { fill: none; stroke: var(--acc); stroke-width: 1.5; }
+  .pt { stroke: var(--ink); stroke-width: 1.5; }
+
+  /* signal display */
+  #spec { display: block; width: 100%; height: 96px; touch-action: none; border: 1px solid var(--line); background: rgba(0,0,0,.35); }
+  #env { display: block; width: 100%; height: 84px; border: 1px solid var(--line); background: rgba(0,0,0,.35); touch-action: none; }
+  #path { display: block; height: 96px; width: 100%; min-width: 0; border: 1px solid var(--line); background: rgba(0,0,0,.35); touch-action: none; }
+  .lane.has::after { content: " •"; color: var(--acc); }
+  .lane.on.has::after { color: #0a0a10; }
+  #ramp { display: block; width: 100%; height: 44px; touch-action: none; }
+  #stopcol { width: 34px; height: 24px; padding: 0; border: 1px solid var(--line); background: transparent; cursor: pointer; }
+  #prof { display: block; width: 100%; height: 90px; border: 1px solid var(--line); background: rgba(0,0,0,.35); touch-action: none; }
+  #mlamp { display: inline-block; flex: none; width: 7px; height: 7px; border: 1px solid var(--dim); border-radius: 50%; }
+  #mlamp.live { background: var(--acc); border-color: var(--acc); }
+  #mstat { min-height: 12px; white-space: nowrap; font-size: 10px; }
+  body.midi-learn #ui .knob, body.midi-learn #ui button, body.midi-learn #ui select { outline: 1px dashed rgba(185,170,240,.55); outline-offset: 2px; cursor: crosshair; }
+  body.midi-learn #ui .midi-bound { outline: 1px solid var(--acc); }
+  body.midi-learn #ui .midi-wait { outline: 2px solid #fff; animation: midiblink .6s infinite alternate; }
+  @keyframes midiblink { to { outline-color: var(--acc); } }
+  body.midi-learn #mlearn, body.midi-learn #mclear { outline: none; }
+  .slots { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+  .slot { padding: 7px 0; text-align: center; color: var(--dim); }
+  .slot.has { color: var(--ink); border-color: rgba(185,170,240,.55); }
+  .slot.on { background: var(--acc); color: #0a0a10; border-color: var(--acc); }
+  #sstore.on { background: #ffd0d0; border-color: #ffd0d0; color: #200; }
+  #sstat { min-height: 12px; font-size: 10px; }
+  #lvl { height: 2px; background: var(--line); }
+  #meterbar { display: block; height: 100%; width: 0; background: var(--acc); }
+  #beat { display: inline-block; width: 7px; height: 7px; border: 1px solid var(--acc); border-radius: 50%; vertical-align: -1px; opacity: .25; }
+  #lamp, #olamp { display: inline-block; width: 7px; height: 7px; border: 1px solid var(--dim); border-radius: 50%; margin-right: 6px; vertical-align: -1px; }
+  #lamp.live, #olamp.live { background: var(--acc); border-color: var(--acc); }
+  #source { max-width: 14ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cap { font-size: 8.5px; color: var(--dim); letter-spacing: .08em; line-height: 1.5; text-transform: none; max-width: 24ch; }
+  #msg { position: fixed; top: 16px; left: 50%; transform: translateX(-50%); max-width: min(640px, calc(100% - 32px)); padding: 10px 14px; border: 1px solid #ff8a8a; background: rgba(40,8,12,.92);
+         color: #ffd0d0; font-size: 12px; text-transform: none; white-space: pre-wrap; z-index: 5; }
+  #msg:empty { display: none; }
+  #drop { position: fixed; inset: 12px; border: 1px dashed var(--acc); background: rgba(185,170,240,.1); z-index: 4; pointer-events: none; }
+  #drop:not([hidden]) { display: block; }
+  #ohint { position: fixed; left: 50%; top: 50%; transform: translate(-50%,-50%); color: #fff; opacity: .6; font-size: 14px; text-align: center; pointer-events: none; transition: opacity 1s; }
+  #ohint.gone { opacity: 0; }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<div id="msg"></div>
+<div id="ui">
+
+  <section class="mod" style="width:262px">
+    <h2 data-i18n="m.scene">Scene</h2>
+    <div class="row" data-i18n-title="tip.theme"><span class="l" data-i18n="theme">Theme</span><button class="step" data-step="theme" data-d="-1" aria-label="Previous theme">◂</button><select id="theme" class="grow"></select><button class="step" data-step="theme" data-d="1" aria-label="Next theme">▸</button></div>
+    <div class="row" data-i18n-title="tip.shape"><span class="l" data-i18n="shape">Shape</span><button class="step" data-step="shape" data-d="-1" aria-label="Previous shape">◂</button><select id="shape" class="grow"></select><button class="step" data-step="shape" data-d="1" aria-label="Next shape">▸</button></div>
+    <div class="row" data-i18n-title="tip.color"><span class="l" data-i18n="color">Color</span><button class="step" data-step="color" data-d="-1" aria-label="Previous color">◂</button><select id="color" class="grow"></select><button class="step" data-step="color" data-d="1" aria-label="Next color">▸</button></div>
+    <div class="row" data-i18n-title="tip.bg"><span class="l" data-i18n="bg">Background</span><button class="step" data-step="bg" data-d="-1" aria-label="Previous background">◂</button><select id="bg" class="grow"></select><button class="step" data-step="bg" data-d="1" aria-label="Next background">▸</button></div>
+    <div class="row" data-i18n-title="tip.text"><span class="l" data-i18n="text">Text</span><input id="txt" type="text" value="AURA" maxlength="24" data-i18n-ph="placeholder" spellcheck="false" autocomplete="off">
+      <label class="btn" data-i18n-title="tip.svg"><span data-i18n="svg">SVG</span><input id="svgfile" type="file" accept=".svg,image/svg+xml"></label></div>
+    <div class="row"><button id="random" data-i18n-title="tip.random"><span data-i18n="random">Random</span><span class="keys">R</span></button><span class="keys" data-i18n="keys.theme">SPACE ←/→ THEME</span></div>
+  </section>
+
+  <section class="mod" style="width:330px">
+    <h2 data-i18n="m.input">Input</h2>
+    <div class="row" style="flex-wrap:wrap">
+      <button id="demo" class="src" data-src="demo" data-i18n="demo" data-i18n-title="tip.demo">Demo</button>
+      <button id="system" class="src" data-src="system" data-i18n="system" data-i18n-title="tip.system">System audio</button>
+      <button id="mic" class="src" data-src="mic" data-i18n="mic" data-i18n-title="tip.mic">Microphone</button>
+      <button id="tab" class="src" data-src="tab" data-i18n="tab" data-i18n-title="tip.tab">Tab</button>
+      <label class="btn src" data-src="file" data-i18n-title="tip.file"><span data-i18n="file">File</span><input id="file" type="file" accept="audio/*"></label>
+    </div>
+    <select id="dev" hidden data-i18n-title="tip.dev"></select>
+    <canvas id="spec" data-i18n-title="tip.spec"></canvas>
+    <div id="lvl" data-i18n-title="tip.meter"><i id="meterbar"></i></div>
+    <div class="row"><span id="lamp"></span><span id="source" class="grow"></span><span class="dim" data-i18n="bpm">BPM</span><span id="bpm">--</span><span id="beat" data-i18n-title="tip.beat"></span><button id="flat" data-i18n="flat" data-i18n-title="tip.flat">Flat</button></div>
+  </section>
+
+  <section class="mod">
+    <h2 data-i18n="m.motion">Motion</h2>
+    <div class="knobs">
+      <div class="knob" data-i18n-title="tip.sens" data-fmt="x"><span class="k" data-i18n="sens">Sens</span><input id="sens" type="range" min="0.4" max="3" step="0.01" value="1"></div>
+      <div class="knob" data-i18n-title="tip.speed" data-fmt="x"><span class="k" data-i18n="speed">Speed</span><input id="speed" type="range" min="0" max="3" step="0.05" value="1"></div>
+      <div class="knob" data-i18n-title="tip.loose" data-fmt="x"><span class="k" data-i18n="loose">Loose</span><input id="loose" type="range" min="0" max="1" step="0.01" value="0.6"></div>
+      <div class="knob" data-i18n-title="tip.cycle" data-fmt="cyc"><span class="k" data-i18n="cycle">Auto</span><input id="cycle" type="range" min="0" max="60" step="1" value="0"></div>
+    </div>
+  </section>
+
+  <section class="mod" style="width:210px">
+    <h2 data-i18n="m.react">Reaction</h2>
+    <canvas id="env" data-i18n-title="tip.env"></canvas>
+    <div class="row"><span class="cap grow" data-i18n="cap.env">how fast the shapes jump and settle</span><button id="envflat" data-i18n="reset" data-i18n-title="tip.envreset">Reset</button></div>
+  </section>
+
+  <section class="mod" style="width:270px">
+    <h2 data-i18n="m.look">Look</h2>
+    <div class="knobs" style="flex-wrap:wrap;row-gap:10px">
+      <div class="knob" data-i18n-title="tip.trail" data-fmt="sec1"><span class="k" data-i18n="trail">Trail</span><input id="trail" type="range" min="0" max="4" step="0.05" value="0"></div>
+      <div class="knob" data-i18n-title="tip.swirl" data-fmt="sgn"><span class="k" data-i18n="swirl">Swirl</span><input id="swirl" type="range" min="-1" max="1" step="0.02" value="0"></div>
+      <div class="knob" data-i18n-title="tip.tunnel" data-fmt="sgn"><span class="k" data-i18n="tunnel">Tunnel</span><input id="tunnel" type="range" min="-1" max="1" step="0.02" value="0"></div>
+      <div class="knob" data-i18n-title="tip.mirror2" data-fmt="mir"><span class="k" data-i18n="mirrork">Mirror</span><input id="mirrork" type="range" min="1" max="6" step="1" value="1"></div>
+      <div class="knob" data-i18n-title="tip.detail" data-fmt="x"><span class="k" data-i18n="detail">Detail</span><input id="detail" type="range" min="0.4" max="1.8" step="0.05" value="1"></div>
+      <div class="knob" data-i18n-title="tip.line" data-fmt="x"><span class="k" data-i18n="line">Line</span><input id="line" type="range" min="0.4" max="3" step="0.05" value="1"></div>
+      <div class="knob" data-i18n-title="tip.glow" data-fmt="x"><span class="k" data-i18n="glow">Glow</span><input id="glow" type="range" min="0" max="2" step="0.05" value="0"></div>
+    </div>
+    <div class="cap" data-i18n="cap.look">Swirl and Tunnel need Trail above 0</div>
+  </section>
+
+  <section class="mod" style="width:140px">
+    <h2 data-i18n="m.beat">Beat</h2>
+    <div class="knobs" style="flex-wrap:wrap;row-gap:10px">
+      <div class="knob" data-i18n-title="tip.kick" data-fmt="x"><span class="k" data-i18n="kick">Kick</span><input id="kick" type="range" min="0" max="1" step="0.02" value="0"></div>
+      <div class="knob" data-i18n-title="tip.flash" data-fmt="x"><span class="k" data-i18n="flash">Flash</span><input id="flash" type="range" min="0" max="1" step="0.02" value="0"></div>
+      <div class="knob" data-i18n-title="tip.split" data-fmt="x"><span class="k" data-i18n="split">Split</span><input id="split" type="range" min="0" max="1" step="0.02" value="0"></div>
+      <div class="knob" data-i18n-title="tip.shift" data-fmt="x"><span class="k" data-i18n="shift">Hue</span><input id="shift" type="range" min="0" max="1" step="0.02" value="0"></div>
+    </div>
+  </section>
+
+  <section class="mod" style="width:300px">
+    <h2 data-i18n="m.prof">Shape profile</h2>
+    <canvas id="prof" data-i18n-title="tip.prof"></canvas>
+    <div class="row" style="flex-wrap:wrap">
+      <select id="palong" style="width:auto" data-i18n-title="tip.along"><option value="rows" data-i18n="along.rows">Along rows</option><option value="line" data-i18n="along.line">Along line</option></select>
+      <button id="ppulse" data-i18n="pulse" data-i18n-title="tip.pulse">Pulse</button>
+      <button id="pfsmooth" data-i18n="smooth" data-i18n-title="tip.smooth">Smooth</button>
+      <select id="pfpreset" style="width:auto" data-i18n-title="tip.preset"><option value="" data-i18n="path.preset">Preset…</option><option value="bulge" data-i18n="pf.bulge">Bulge</option><option value="waist" data-i18n="pf.waist">Waist</option><option value="taper" data-i18n="pf.taper">Taper</option><option value="flare" data-i18n="pf.flare">Flare</option><option value="wave" data-i18n="pf.wave">Wave</option></select>
+      <button id="pfclear" data-i18n="clear" data-i18n-title="tip.clear2">Clear</button>
+    </div>
+  </section>
+
+  <section class="mod" style="width:300px">
+    <h2 data-i18n="m.ramp">Colour ramp</h2>
+    <canvas id="ramp" data-i18n-title="tip.ramp"></canvas>
+    <div class="row"><span class="l" data-i18n="mapby">Map by</span>
+      <select id="rmap" class="grow" data-i18n-title="tip.mapby"><option value="line" data-i18n="map.line">Along the line</option><option value="row" data-i18n="map.row">Row</option><option value="spectrum" data-i18n="map.spectrum">Spectrum height</option><option value="level" data-i18n="map.level">Loudness</option><option value="time" data-i18n="map.time">Time</option></select></div>
+    <div class="row" style="flex-wrap:wrap"><input id="stopcol" type="color" data-i18n-title="tip.stopcol">
+      <button id="rmirror" data-i18n="mirror" data-i18n-title="tip.mirror">Mirror</button><button id="rflip" data-i18n="flip" data-i18n-title="tip.flip">Flip</button>
+      <select id="rpreset" style="width:auto" data-i18n-title="tip.rpreset"><option value="" data-i18n="path.preset">Preset…</option><option value="neon">Neon</option><option value="sunset">Sunset</option><option value="ocean">Ocean</option><option value="fire">Fire</option><option value="mint">Mint</option><option value="ice">Ice</option><option value="mono">Mono</option></select></div>
+  </section>
+
+  <section class="mod" style="width:360px">
+    <h2 data-i18n="m.path">Camera path</h2>
+    <div class="row" style="align-items:flex-start"><canvas id="path" class="grow" data-i18n-title="tip.path"></canvas>
+      <div class="knob" data-i18n-title="tip.loop" data-fmt="sec"><span class="k" data-i18n="loop">Loop</span><input id="loop" type="range" min="4" max="120" step="1" value="20"></div></div>
+    <div class="row" style="flex-wrap:wrap">
+      <button class="lane" data-lane="yaw" data-i18n="yaw" data-i18n-title="tip.lane.yaw">Yaw</button>
+      <button class="lane" data-lane="pitch" data-i18n="pitch" data-i18n-title="tip.lane.pitch">Pitch</button>
+      <button class="lane" data-lane="zoom" data-i18n="dist" data-i18n-title="tip.lane.zoom">Distance</button>
+      <select id="ppreset" style="width:auto" data-i18n-title="tip.preset"><option value="" data-i18n="path.preset">Preset…</option><option value="sine" data-i18n="p.sine">Sine</option><option value="tri" data-i18n="p.tri">Triangle</option><option value="rampup" data-i18n="p.rampup">Ramp up</option><option value="rampdown" data-i18n="p.rampdown">Ramp down</option><option value="swing" data-i18n="p.swing">Swing</option></select>
+      <button id="psmooth" data-i18n="smooth" data-i18n-title="tip.smooth">Smooth</button>
+      <button id="pclear" data-i18n="clear" data-i18n-title="tip.clear">Clear</button>
+    </div>
+  </section>
+
+  <section class="mod" style="width:262px">
+    <h2 data-i18n="m.scenes">Scenes</h2>
+    <div class="row" style="align-items:flex-start">
+      <div class="slots grow">
+        <button class="slot" id="slot1" data-slot="0">1</button><button class="slot" id="slot2" data-slot="1">2</button><button class="slot" id="slot3" data-slot="2">3</button><button class="slot" id="slot4" data-slot="3">4</button>
+        <button class="slot" id="slot5" data-slot="4">5</button><button class="slot" id="slot6" data-slot="5">6</button><button class="slot" id="slot7" data-slot="6">7</button><button class="slot" id="slot8" data-slot="7">8</button>
+      </div>
+      <div class="knob" data-i18n-title="tip.glide" data-fmt="sec1"><span class="k" data-i18n="glide">Glide</span><input id="glide" type="range" min="0" max="8" step="0.1" value="1"></div>
+    </div>
+    <div class="row" style="flex-wrap:wrap">
+      <button id="sstore" data-i18n="store" data-i18n-title="tip.store">Store</button>
+      <button id="sexport" data-i18n="savefile" data-i18n-title="tip.savefile">Save file</button>
+      <label class="btn" data-i18n-title="tip.loadfile"><span data-i18n="loadfile">Load file</span><input id="simport" type="file" accept=".json,application/json"></label>
+    </div>
+    <div class="row"><span id="sstat" class="dim"></span></div>
+    <div class="cap" data-i18n="cap.scenes">1-8: recall - Shift+1-8: store</div>
+  </section>
+
+  <section class="mod" style="width:190px">
+    <h2 data-i18n="m.midi">MIDI</h2>
+    <div class="row"><span id="mlamp"></span><select id="mdev" class="grow" data-i18n-title="tip.mdev"></select></div>
+    <div class="row"><button id="mlearn" data-i18n="learn" data-i18n-title="tip.learn">Learn</button><button id="mclear" data-i18n="clear" data-i18n-title="tip.mclear">Clear</button></div>
+    <div class="row"><span id="mstat" class="dim" data-i18n-title="tip.mstat"></span></div>
+    <div class="cap" data-i18n="cap.midi">Learn: click a control, then move a knob or hit a pad</div>
+  </section>
+
+  <section class="mod" style="width:200px">
+    <h2 data-i18n="m.camera">Camera</h2>
+    <div class="row">
+      <div class="knob" data-i18n-title="tip.dist" data-fmt="x"><span class="k" data-i18n="dist">Distance</span><input id="dist" type="range" min="-0.7" max="3" step="0.01" value="1"></div>
+      <div class="grow">
+        <div class="row"><span class="l" style="width:4.2em" data-i18n="yaw">Yaw</span><span id="yaw">0°</span></div>
+        <div class="row"><span class="l" style="width:4.2em" data-i18n="pitch">Pitch</span><span id="pitch">0°</span></div>
+        <div class="row"><button id="camreset" data-i18n="reset" data-i18n-title="tip.reset">Reset</button></div>
+      </div>
+    </div>
+    <div class="cap" data-i18n="cap.cam">drag: rotate · pinch/scroll: distance (negative = inside the shape) · 2× click: reset</div>
+  </section>
+
+  <section class="mod" style="width:168px">
+    <h2 data-i18n="m.output">Output</h2>
+    <button id="out" data-i18n-title="tip.out"><span data-i18n="out">Output window</span><span class="keys">O</span></button>
+    <button id="black" data-i18n-title="tip.black"><span data-i18n="black">Blackout</span><span class="keys">B</span></button>
+    <div class="row dim"><span id="olamp" class="lampx"></span><span id="ostat" data-i18n="nolink">no output</span></div>
+    <div class="row"><button id="full" data-i18n-title="tip.full"><span data-i18n="fullscreen">Fullscreen</span><span class="keys">F</span></button></div>
+    <div class="row"><button id="hide" data-i18n-title="tip.hide"><span data-i18n="hide">Hide</span><span class="keys">H</span></button><span class="sp"></span><button id="lang" data-i18n-title="tip.lang">EN</button></div>
+  </section>
+
+</div>
+<div id="drop" hidden></div>
+<div id="ohint"></div>
+<script type="module" src="src/main.js"></script>
+</body>
+</html>
